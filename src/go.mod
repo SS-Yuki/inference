@@ -1,4 +1,4 @@
-module kawsome
+module inference
 
 go 1.22.1
 
