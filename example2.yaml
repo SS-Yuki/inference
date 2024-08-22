@@ -1,0 +1,77 @@
+resources:
+    - id: v1:Namespace:example
+      type: Kubernetes
+      attributes:
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+            creationTimestamp: null
+            name: example
+        spec: {}
+        status: {}
+      extensions:
+        GVK: /v1, Kind=Namespace
+    - id: apps/v1:Deployment:example:example-dev-nginx
+      type: Kubernetes
+      attributes:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+            creationTimestamp: null
+            labels:
+                app.kubernetes.io/name: nginx
+                app.kubernetes.io/part-of: example
+            name: example-dev-nginx
+            namespace: example
+        spec:
+            selector:
+                matchLabels:
+                    app.kubernetes.io/name: nginx
+                    app.kubernetes.io/part-of: example
+            strategy: {}
+            template:
+                metadata:
+                    creationTimestamp: null
+                    labels:
+                        app.kubernetes.io/name: nginx
+                        app.kubernetes.io/part-of: example
+                spec:
+                    containers:
+                        - image: nginx:1.25.2
+                          name: nginx
+                          resources: {}
+        status: {}
+      dependsOn:
+        - v1:Namespace:example
+        - v1:Service:example:example-dev-nginx-private
+      extensions:
+        GVK: apps/v1, Kind=Deployment
+    - id: v1:Service:example:example-dev-nginx-private
+      type: Kubernetes
+      attributes:
+        apiVersion: v1
+        kind: Service
+        metadata:
+            creationTimestamp: null
+            labels:
+                app.kubernetes.io/name: nginx
+                app.kubernetes.io/part-of: example
+            name: example-dev-nginx-private
+            namespace: example
+        spec:
+            ports:
+                - name: example-dev-nginx-private-80-tcp
+                  port: 80
+                  protocol: TCP
+                  targetPort: 80
+            selector:
+                app.kubernetes.io/name: nginx
+                app.kubernetes.io/part-of: example
+            type: ClusterIP
+        status:
+            loadBalancer: {}
+      dependsOn:
+        - v1:Namespace:example
+      extensions:
+        GVK: /v1, Kind=Service
+
