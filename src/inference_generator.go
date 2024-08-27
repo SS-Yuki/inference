@@ -3,18 +3,25 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strings"
 
 	"gopkg.in/yaml.v2"
+	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"kusionstack.io/kusion-module-framework/pkg/module"
 	"kusionstack.io/kusion-module-framework/pkg/server"
 	apiv1 "kusionstack.io/kusion/pkg/apis/api.kusion.io/v1"
 	"kusionstack.io/kusion/pkg/log"
-	"kusionstack.io/kusion/pkg/modules"
+)
+
+var (
+	inferDeploymentSuffix = "-infer-deployment"
+	inferStorageSuffix    = "-infer-storage"
+	inferServiceSuffix    = "-infer-service"
+)
+
+var (
+	OllamaImage = "ollama"
 )
 
 func main() {
@@ -47,10 +54,6 @@ func (infer *Inference) Generate(_ context.Context, request *module.GeneratorReq
 		return nil, nil
 	}
 
-	/*
-		向Inference对象填充配置
-		生成资源
-	*/
 	// Get the complete inference module configs.
 	if err := infer.CompleteConfig(request.DevConfig, request.PlatformConfig); err != nil {
 		log.Debugf("failed to get complete inference module configs: %v", err)
@@ -63,15 +66,11 @@ func (infer *Inference) Generate(_ context.Context, request *module.GeneratorReq
 		return nil, err
 	}
 
-	var resources []apiv1.Resource
-	var patcher *apiv1.Patcher
-
 	// Generate the Kubernetes Service related resource.
-	resource, patcher, err := infer.GenerateInferenceResource(request)
+	resources, patcher, err := infer.GenerateInferenceResource(request)
 	if err != nil {
 		return nil, err
 	}
-	resources = append(resources, *resource)
 
 	// Return the Kusion generator response.
 	return &module.GeneratorResponse{
@@ -134,87 +133,174 @@ func (infer *Inference) ValidateConfig() error {
 //
 // Note that we will use the SDK provided by the kusion module framework to wrap the Kubernetes resource
 // into Kusion resource.
-func (infer *Inference) GenerateInferenceResource(request *module.GeneratorRequest) (*apiv1.Resource, *apiv1.Patcher, error) {
+func (infer *Inference) GenerateInferenceResource(request *module.GeneratorRequest) ([]apiv1.Resource, *apiv1.Patcher, error) {
 	/*
 		生成 Ollama Deployment 资源
 		生成 Ollama Service 资源
 		Patcher 中配置 Ollama 服务路径
 	*/
+	var resources []apiv1.Resource
 
-	appUniqueName := "ollama-" + modules.UniqueAppName(request.Project, request.Stack, request.App)
-	// Deployment: Container Volume
-	deployment := &appsv1.Deployment{
-		TypeMeta:   typeMeta,
-		ObjectMeta: objectMeta,
-		Spec:       spec,
+	// Build Kubernetes Deployment for the local MySQL instance.
+	localDeployment, err := infer.generateDeployment(request)
+	if err != nil {
+		return nil, nil, err
 	}
+	resources = append(resources, *localDeployment)
 
-	// Service
-	svc := &v1.Service{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1.SchemeGroupVersion.String(),
-			Kind:       "Service",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      appUniqueName,
-			Namespace: request.Project,
-		},
-		Spec: v1.ServiceSpec{
-			Ports: []v1.ServicePort{
-				{
-					Name: fmt.Sprintf("%s-%d-%s",
-						appUniqueName, infer.Service.Port, strings.ToLower(infer.Service.Protocol)),
-					Port:       int32(infer.Service.Port),
-					TargetPort: intstr.FromInt(infer.Service.TargetPort),
-					Protocol:   v1.Protocol(infer.Service.Protocol),
-				},
-			},
-			Selector: selector,
-			Type:     svcType,
-		},
+	// Build Kubernetes Service for the local MySQL instance.
+	localSvc, hostAddress, err := infer.generateService(request)
+	if err != nil {
+		return nil, nil, err
 	}
+	resources = append(resources, *localSvc)
 
-	// Patch
 	envVars := []v1.EnvVar{
 		{
 			Name:  "INFERENCE_PATH",
-			Value: "",
+			Value: hostAddress,
 		},
 	}
 	patcher := &apiv1.Patcher{
 		Environments: envVars,
 	}
 
-	// Generate the unique application name with project, stack and app name.
-	appUniqueName := modules.UniqueAppName(request.Project, request.Stack, request.App)
-	svcType := v1.ServiceTypeClusterIP
+	return resources, patcher, nil
+}
 
-	// Generate the selector for the Service workload with the unique app labels SDK
-	// provided by Kusion.
-	selector := modules.UniqueAppLabels(request.Project, request.App)
-
-	// Add the labels and annotations in inference module to the Service.
-	if len(svc.Labels) == 0 {
-		svc.Labels = make(map[string]string)
-	}
-	if len(svc.Annotations) == 0 {
-		svc.Annotations = make(map[string]string)
-	}
-
-	for k, v := range infer.Service.Labels {
-		svc.Labels[k] = v
-	}
-	for k, v := range infer.Service.Annotations {
-		svc.Annotations[k] = v
+// generatePodSpec generates the Kubernetes PodSpec for the Inference instance.
+func (infer *Inference) generatePodSpec(_ *module.GeneratorRequest) (v1.PodSpec, error) {
+	var mountPath string
+	var modelPullCmd []string
+	var containerPort int32
+	switch infer.Framework {
+	case "ollama":
+		mountPath = "/root/.ollama"
+		modelPullCmd = append(modelPullCmd, "ollama", "pull", infer.Framework)
+		containerPort = 11434
+	default:
 	}
 
-	// Generate Kusion resource ID and wrap the Kubernetes Service into Kusion resource
-	// with the SDK provided by kusion module framework.
-	resourceID := module.KubernetesResourceID(svc.TypeMeta, svc.ObjectMeta)
-	resource, err := module.WrapK8sResourceToKusionResource(resourceID, svc)
+	image := OllamaImage
+
+	volumes := []v1.Volume{
+		{
+			Name: infer.Framework + inferStorageSuffix,
+			VolumeSource: v1.VolumeSource{
+				EmptyDir: &v1.EmptyDirVolumeSource{},
+			},
+		},
+	}
+
+	volumeMounts := []v1.VolumeMount{
+		{
+			Name:      infer.Framework + inferStorageSuffix,
+			MountPath: mountPath,
+		},
+	}
+
+	ports := []v1.ContainerPort{
+		{
+			Name:          infer.Framework,
+			ContainerPort: containerPort,
+		},
+	}
+
+	podSpec := v1.PodSpec{
+		Containers: []v1.Container{
+			{
+				Name:         infer.Framework,
+				Image:        image,
+				Ports:        ports,
+				Command:      modelPullCmd,
+				VolumeMounts: volumeMounts,
+			},
+		},
+		Volumes: volumes,
+	}
+	return podSpec, nil
+}
+
+// generateDeployment generates the Kubernetes Deployment resource for the Inference instance.
+func (infer *Inference) generateDeployment(request *module.GeneratorRequest) (*apiv1.Resource, error) {
+	// Prepare the Pod Spec for the Inference instance.
+	podSpec, err := infer.generatePodSpec(request)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil
 	}
 
-	return resource, patcher, nil
+	// Create the Kubernetes Deployment for the Inference instance.
+	deployment := &appsv1.Deployment{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Deployment",
+			APIVersion: appsv1.SchemeGroupVersion.String(),
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      infer.Framework + inferDeploymentSuffix,
+			Namespace: request.Project,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: infer.generateMatchLabels(),
+			},
+			Template: v1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: infer.generateMatchLabels(),
+				},
+				Spec: podSpec,
+			},
+		},
+	}
+
+	resourceID := module.KubernetesResourceID(deployment.TypeMeta, deployment.ObjectMeta)
+	resource, err := module.WrapK8sResourceToKusionResource(resourceID, deployment)
+	if err != nil {
+		return nil, err
+	}
+
+	return resource, nil
+}
+
+// generateService generates the Kubernetes Service resource for the Inference instance.
+func (infer *Inference) generateService(request *module.GeneratorRequest) (*apiv1.Resource, string, error) {
+	// Prepare the service port for the Inference instance.
+	svcName := infer.Framework + inferServiceSuffix
+	svcPort := []v1.ServicePort{
+		{
+			Port: int32(80),
+		},
+	}
+
+	// Create the Kubernetes service for Inference instance.
+	service := &v1.Service{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Service",
+			APIVersion: v1.SchemeGroupVersion.String(),
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      svcName,
+			Namespace: request.Project,
+			Labels:    infer.generateMatchLabels(),
+		},
+		Spec: v1.ServiceSpec{
+			Type:     v1.ServiceTypeClusterIP,
+			Ports:    svcPort,
+			Selector: infer.generateMatchLabels(),
+		},
+	}
+
+	resourceID := module.KubernetesResourceID(service.TypeMeta, service.ObjectMeta)
+	resource, err := module.WrapK8sResourceToKusionResource(resourceID, service)
+	if err != nil {
+		return nil, err
+	}
+
+	return resource, svcName, nil
+}
+
+// generateMatchLabels generates the match labels for the Kubernetes resources of the Inference instance.
+func (infer *Inference) generateMatchLabels() map[string]string {
+	return map[string]string{
+		"accessory": infer.Framework,
+	}
 }
