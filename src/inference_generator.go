@@ -149,7 +149,7 @@ func (infer *Inference) GenerateInferenceResource(request *module.GeneratorReque
 	resources = append(resources, *localDeployment)
 
 	// Build Kubernetes Service for the local MySQL instance.
-	localSvc, hostAddress, err := infer.generateService(request)
+	localSvc, svcName, err := infer.generateService(request)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -158,7 +158,7 @@ func (infer *Inference) GenerateInferenceResource(request *module.GeneratorReque
 	envVars := []v1.EnvVar{
 		{
 			Name:  "INFERENCE_PATH",
-			Value: hostAddress,
+			Value: svcName,
 		},
 	}
 	patcher := &apiv1.Patcher{
@@ -292,7 +292,7 @@ func (infer *Inference) generateService(request *module.GeneratorRequest) (*apiv
 	resourceID := module.KubernetesResourceID(service.TypeMeta, service.ObjectMeta)
 	resource, err := module.WrapK8sResourceToKusionResource(resourceID, service)
 	if err != nil {
-		return nil, err
+		return nil, svcName, err
 	}
 
 	return resource, svcName, nil

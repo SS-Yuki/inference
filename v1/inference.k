@@ -41,28 +41,20 @@ schema Inference:
         }
     }
     """
-
-    model:              str
-    framework:          "Ollama" | "KubeRay"
-
-    system?:             str = ""
-    template?:           str = ""
-
-    top_k?:             int = 40
-    top_p?:             float = 0.9
-    temperature?:       float = 0.8
-
-    num_predict?:       int = 128
-    num_ctx?:           int = 2048
+    model: str
+    framework: "Ollama" | "KubeRay"
+    system?: str = ""
+    template?: str = ""
+    top_k?: int = 40
+    top_p?: float = 0.9
+    temperature?: float = 0.8
+    num_predict?: int = 128
+    num_ctx?: int = 2048
 
     check:
-        0 < top_k if top_k,
-        0 < top_p <= 1 if top_p,
-        0 < temperature if temperature,
+        0 < top_k if top_k, "top_k must be more than 0"
+        0 < top_p <= 1 if top_p, "top_p must be greater than 0 and less than or equal to 1"
+        0 < temperature if temperature, "temperature must be more than 0"
+        -2 <= num_predict if num_predict, "num_predict must be greater than or equal to -2"
+        0 < num_ctx if num_ctx, "num_ctx must be greater than 0"
 
-        -2 <= num_predict if num_predict,
-        0 < num_ctx if num_ctx,
-
-
-
-    
