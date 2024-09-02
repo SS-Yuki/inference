@@ -15,9 +15,28 @@ import (
 )
 
 var (
+	ErrEmptyInstanceTypeForCloudDB = errors.New("empty instance type for cloud managed mysql instance")
+	ErrEmptyCloudProviderType      = errors.New("empty cloud provider type in mysql module config")
+	ErrUnsupportFramework          = errors.New("framework must be Ollama or KubeRay")
+	ErrRangeTopK                   = errors.New("topK must be greater than 0 if exist")
+	ErrRangeTopP                   = errors.New("topP must be greater than 0 and less than or equal to 1 if exist")
+	ErrRangeTemperature            = errors.New("temperature must be greater than 0 if exist")
+	ErrRangeNumPredict             = errors.New("numPredict must be greater than or equal to -2")
+	ErrRangeNumCtx                 = errors.New("numCtx must be greater than 0 if exist")
+)
+
+var (
 	inferDeploymentSuffix = "-infer-deployment"
 	inferStorageSuffix    = "-infer-storage"
 	inferServiceSuffix    = "-infer-service"
+)
+
+var (
+	defaultTopK        int     = 40
+	defaultTopP        float64 = 0.9
+	defaultTemperature float64 = 0.8
+	defaultNumPredict  int     = 128
+	defaultNumCtx      int     = 2048
 )
 
 var (
@@ -81,6 +100,12 @@ func (infer *Inference) Generate(_ context.Context, request *module.GeneratorReq
 
 // CompleteConfig completes the inference module configs with both devModuleConfig and platformModuleConfig.
 func (infer *Inference) CompleteConfig(devConfig apiv1.Accessory, platformConfig apiv1.GenericConfig) error {
+	infer.TopK = defaultTopK
+	infer.TopP = defaultTopP
+	infer.Temperature = defaultTemperature
+	infer.NumPredict = defaultNumPredict
+	infer.NumCtx = defaultNumCtx
+
 	// Retrieve the config items the developers are concerned about.
 	if devConfig != nil {
 		devCfgYamlStr, err := yaml.Marshal(devConfig)
@@ -109,22 +134,22 @@ func (infer *Inference) CompleteConfig(devConfig apiv1.Accessory, platformConfig
 // ValidateConfig validates the completed inference configs are valid or not.
 func (infer *Inference) ValidateConfig() error {
 	if infer.Framework != "Ollama" && infer.Framework != "KubeRay" {
-		return errors.New("framework must be Ollama or KubeRay")
+		return ErrUnsupportFramework
 	}
 	if infer.TopK <= 0 {
-		return errors.New("topK must be greater than 0 if exist")
+		return ErrRangeTopK
 	}
 	if infer.TopP <= 0 || infer.TopP > 1 {
-		return errors.New("topP must be greater than 0 and less than or equal to 1 if exist")
+		return ErrRangeTopP
 	}
 	if infer.Temperature <= 0 {
-		return errors.New("temperature must be greater than 0 if exist")
+		return ErrRangeTemperature
 	}
 	if infer.NumPredict < -2 {
-		return errors.New("numPredict must be greater than or equal to -2")
+		return ErrRangeNumPredict
 	}
 	if infer.NumCtx <= 0 {
-		return errors.New("numCtx must be greater than 0 if exist")
+		return ErrRangeNumCtx
 	}
 	return nil
 }
