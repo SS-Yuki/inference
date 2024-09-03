@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v2"
 	appsv1 "k8s.io/api/apps/v1"
@@ -15,14 +17,12 @@ import (
 )
 
 var (
-	ErrEmptyInstanceTypeForCloudDB = errors.New("empty instance type for cloud managed mysql instance")
-	ErrEmptyCloudProviderType      = errors.New("empty cloud provider type in mysql module config")
-	ErrUnsupportFramework          = errors.New("framework must be Ollama or KubeRay")
-	ErrRangeTopK                   = errors.New("topK must be greater than 0 if exist")
-	ErrRangeTopP                   = errors.New("topP must be greater than 0 and less than or equal to 1 if exist")
-	ErrRangeTemperature            = errors.New("temperature must be greater than 0 if exist")
-	ErrRangeNumPredict             = errors.New("numPredict must be greater than or equal to -2")
-	ErrRangeNumCtx                 = errors.New("numCtx must be greater than 0 if exist")
+	ErrUnsupportFramework = errors.New("framework must be Ollama or KubeRay")
+	ErrRangeTopK          = errors.New("topK must be greater than 0 if exist")
+	ErrRangeTopP          = errors.New("topP must be greater than 0 and less than or equal to 1 if exist")
+	ErrRangeTemperature   = errors.New("temperature must be greater than 0 if exist")
+	ErrRangeNumPredict    = errors.New("numPredict must be greater than or equal to -2")
+	ErrRangeNumCtx        = errors.New("numCtx must be greater than 0 if exist")
 )
 
 var (
@@ -159,26 +159,21 @@ func (infer *Inference) ValidateConfig() error {
 // Note that we will use the SDK provided by the kusion module framework to wrap the Kubernetes resource
 // into Kusion resource.
 func (infer *Inference) GenerateInferenceResource(request *module.GeneratorRequest) ([]apiv1.Resource, *apiv1.Patcher, error) {
-	/*
-		生成 Ollama Deployment 资源
-		生成 Ollama Service 资源
-		Patcher 中配置 Ollama 服务路径
-	*/
 	var resources []apiv1.Resource
 
-	// Build Kubernetes Deployment for the local MySQL instance.
-	localDeployment, err := infer.generateDeployment(request)
+	// Build Kubernetes Deployment for the Inference instance.
+	deployment, err := infer.generateDeployment(request)
 	if err != nil {
 		return nil, nil, err
 	}
-	resources = append(resources, *localDeployment)
+	resources = append(resources, *deployment)
 
-	// Build Kubernetes Service for the local MySQL instance.
-	localSvc, svcName, err := infer.generateService(request)
+	// Build Kubernetes Service for the Inference instance.
+	svc, svcName, err := infer.generateService(request)
 	if err != nil {
 		return nil, nil, err
 	}
-	resources = append(resources, *localSvc)
+	resources = append(resources, *svc)
 
 	envVars := []v1.EnvVar{
 		{
@@ -201,7 +196,30 @@ func (infer *Inference) generatePodSpec(_ *module.GeneratorRequest) (v1.PodSpec,
 	switch infer.Framework {
 	case "ollama":
 		mountPath = "/root/.ollama"
-		modelPullCmd = append(modelPullCmd, "ollama", "pull", infer.Framework)
+
+		var builder strings.Builder
+		builder.WriteString("'")
+		builder.WriteString(fmt.Sprintf("FROM %s\n", infer.Model))
+		if infer.System != "" {
+			builder.WriteString(fmt.Sprintf(`SYSTEM """%s"""`, infer.System))
+			builder.WriteString("\n")
+		}
+		if infer.Template != "" {
+			builder.WriteString(fmt.Sprintf(`TEMPLATE """%s""""`, infer.Template))
+			builder.WriteString("\n")
+		}
+		builder.WriteString(fmt.Sprintf("PARAMETER top_k %d\n", infer.TopK))
+		builder.WriteString(fmt.Sprintf("PARAMETER top_p %f\n", infer.TopP))
+		builder.WriteString(fmt.Sprintf("PARAMETER temperature %f\n", infer.Temperature))
+		builder.WriteString(fmt.Sprintf("PARAMETER num_predict %d\n", infer.NumPredict))
+		builder.WriteString(fmt.Sprintf("PARAMETER num_ctx %d\n", infer.NumCtx))
+		builder.WriteString("'")
+
+		var commandParts []string
+		commandParts = append(commandParts, fmt.Sprintf("echo %s > Modelfile", builder.String()))
+		commandParts = append(commandParts, fmt.Sprintf("ollama create %s -f Modelfile", infer.Model))
+
+		modelPullCmd = append(modelPullCmd, "/bin/sh", "-c", strings.Join(commandParts, " && "))
 		containerPort = 11434
 	default:
 	}
