@@ -21,49 +21,18 @@ func TestInferenceModule_Generator(t *testing.T) {
 			},
 			Service: &apiv1.Service{},
 		},
-	}
-
-	testcases := []struct {
-		name            string
-		devModuleConfig apiv1.Accessory
-		platformConfig  apiv1.GenericConfig
-		expectedErr     error
-	}{
-		{
-			name: "Generate inference by Ollama",
-			devModuleConfig: apiv1.Accessory{
-				"model":     "llama3",
-				"framework": "Ollama",
-			},
-			platformConfig: nil,
-			expectedErr:    nil,
+		DevConfig: apiv1.Accessory{
+			"model":     "llama3",
+			"framework": "Ollama",
 		},
-		// {
-		// 	name: "Unsupported framework",
-		// 	devModuleConfig: apiv1.Accessory{
-		// 		"model":     "llama3",
-		// 		"framework": "unsupported-type",
-		// 	},
-		// platformConfig: nil,
-		// 	expectedErr: errors.New("unsupported framework type"),
-		// },
+		PlatformConfig: nil,
 	}
 
-	for _, tc := range testcases {
-		inference := &Inference{}
-		t.Run(tc.name, func(t *testing.T) {
-			r.DevConfig = tc.devModuleConfig
-			r.PlatformConfig = tc.platformConfig
+	infer := &Inference{}
+	res, err := infer.Generate(context.Background(), r)
 
-			res, err := inference.Generate(context.Background(), r)
-			if tc.expectedErr != nil {
-				assert.ErrorContains(t, err, tc.expectedErr.Error())
-			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, res)
-			}
-		})
-	}
+	assert.NoError(t, err)
+	assert.NotNil(t, res)
 }
 
 func TestInferenceModule_CompleteConfig(t *testing.T) {
@@ -128,6 +97,22 @@ func TestInferenceModule_CompleteConfig(t *testing.T) {
 }
 
 func TestInferenceModule_ValidateConfig(t *testing.T) {
+	t.Run("validate no error", func(t *testing.T) {
+		infer := &Inference{
+			Model:       "qwen",
+			Framework:   "Ollama",
+			System:      "",
+			Template:    "",
+			TopK:        40,
+			TopP:        0.9,
+			Temperature: 0.8,
+			NumPredict:  128,
+			NumCtx:      2048,
+		}
+		err := infer.ValidateConfig()
+		assert.NoError(t, err)
+	})
+
 	t.Run("test framework", func(t *testing.T) {
 		infer := &Inference{
 			Model:       "qwen",
@@ -225,7 +210,7 @@ func TestInferenceModule_ValidateConfig(t *testing.T) {
 	})
 }
 
-func TestInferenceModule_GenerateDeployment(t *testing.T) {
+func TestInferenceModule_GenerateInferenceResource(t *testing.T) {
 	r := &module.GeneratorRequest{
 		Project: "test-project",
 		Stack:   "test-stack",
@@ -238,14 +223,22 @@ func TestInferenceModule_GenerateDeployment(t *testing.T) {
 		},
 	}
 
-	inference := &Inference{
-		Model:     "qwen",
-		Framework: "ollama",
+	infer := &Inference{
+		Model:       "qwen",
+		Framework:   "Ollama",
+		System:      "",
+		Template:    "",
+		TopK:        40,
+		TopP:        0.9,
+		Temperature: 0.8,
+		NumPredict:  128,
+		NumCtx:      2048,
 	}
 
-	res, err := inference.generateDeployment(r)
+	res, patch, err := infer.GenerateInferenceResource(r)
 
 	assert.NotNil(t, res)
+	assert.NotNil(t, patch)
 	assert.NoError(t, err)
 }
 
@@ -262,12 +255,50 @@ func TestInferenceModule_GeneratePodSpec(t *testing.T) {
 		},
 	}
 
-	inference := &Inference{
-		Model:     "qwen",
-		Framework: "ollama",
+	infer := &Inference{
+		Model:       "qwen",
+		Framework:   "Ollama",
+		System:      "",
+		Template:    "",
+		TopK:        40,
+		TopP:        0.9,
+		Temperature: 0.8,
+		NumPredict:  128,
+		NumCtx:      2048,
 	}
 
-	res, err := inference.generatePodSpec(r)
+	res, err := infer.generatePodSpec(r)
+
+	assert.NotNil(t, res)
+	assert.NoError(t, err)
+}
+
+func TestInferenceModule_GenerateDeployment(t *testing.T) {
+	r := &module.GeneratorRequest{
+		Project: "test-project",
+		Stack:   "test-stack",
+		App:     "test-app",
+		Workload: &v1.Workload{
+			Header: v1.Header{
+				Type: "Service",
+			},
+			Service: &v1.Service{},
+		},
+	}
+
+	infer := &Inference{
+		Model:       "qwen",
+		Framework:   "Ollama",
+		System:      "",
+		Template:    "",
+		TopK:        40,
+		TopP:        0.9,
+		Temperature: 0.8,
+		NumPredict:  128,
+		NumCtx:      2048,
+	}
+
+	res, err := infer.generateDeployment(r)
 
 	assert.NotNil(t, res)
 	assert.NoError(t, err)
@@ -286,14 +317,22 @@ func TestInferenceModule_GenerateService(t *testing.T) {
 		},
 	}
 
-	inference := &Inference{
-		Model:     "qwen",
-		Framework: "ollama",
+	infer := &Inference{
+		Model:       "qwen",
+		Framework:   "Ollama",
+		System:      "",
+		Template:    "",
+		TopK:        40,
+		TopP:        0.9,
+		Temperature: 0.8,
+		NumPredict:  128,
+		NumCtx:      2048,
 	}
 
-	res, svcName, err := inference.generateService(r)
+	res, svcName, err := infer.generateService(r)
 
 	assert.NotNil(t, res)
 	assert.NotNil(t, svcName)
+	assert.Equal(t, infer.Framework+inferServiceSuffix, svcName)
 	assert.NoError(t, err)
 }

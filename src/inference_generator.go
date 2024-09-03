@@ -40,6 +40,10 @@ var (
 )
 
 var (
+	OllamaType = "ollama"
+)
+
+var (
 	OllamaImage = "ollama"
 )
 
@@ -84,6 +88,17 @@ func (infer *Inference) Generate(_ context.Context, request *module.GeneratorReq
 		log.Debugf("failed to validate the inference module configs: %v", err)
 		return nil, err
 	}
+
+	// var resources []apiv1.Resource
+	// var patcher *apiv1.Patcher
+	// var err error
+
+	// switch strings.ToLower(infer.Framework) {
+	// case OllamaType:
+	// 	resources, patcher, err = infer.GenerateInferenceResource(request)
+	// default:
+	// 	return nil, ErrUnsupportFramework
+	// }
 
 	// Generate the Kubernetes Service related resource.
 	resources, patcher, err := infer.GenerateInferenceResource(request)
